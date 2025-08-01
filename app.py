@@ -178,11 +178,17 @@ async def get_stats():
 
 if __name__ == "__main__":
     import os
+    
+    # Cloud Run sets PORT environment variable
     port = int(os.environ.get("PORT", 8080))
+    
+    print(f"🚀 Starting RasaChatbot on 0.0.0.0:{port}")
+    print(f"🌐 Environment: {os.environ.get('ENVIRONMENT', 'production')}")
     
     uvicorn.run(
         "app:app",
-        host="0.0.0.0",
+        host="0.0.0.0",      # Required for Cloud Run
         port=port,
-        reload=False
+        reload=False,
+        log_level="info"
     )
