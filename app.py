@@ -178,15 +178,11 @@ async def get_stats():
 
 if __name__ == "__main__":
     import os
-    
-    # Render's PORT environment variable (default: 10000)
-    port = int(os.environ.get("PORT", 10000))  # Changed default to 10000
-    
-    print(f"🚀 Starting server on host 0.0.0.0 port {port}")
+    port = int(os.environ.get("PORT", 8080))
     
     uvicorn.run(
         "app:app",
-        host="0.0.0.0",      # REQUIRED by Render
-        port=port,           # Use Render's PORT env var
+        host="0.0.0.0",
+        port=port,
         reload=False
     )
