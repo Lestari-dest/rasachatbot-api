@@ -1,17 +1,33 @@
+# Production-ready requirements.txt
+# Based on successful local installation
+
 # Web Framework
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 
-# Machine Learning & NLP
-torch==2.6.0
-transformers==4.35.0
-google-generativeai==0.3.0
+# Machine Learning & AI
+torch>=2.6.0
+transformers>=4.54.0
+google-generativeai>=0.8.0
 
-# Data Validation & Processing
-pydantic==2.4.2
-python-dotenv==1.0.0
-python-multipart==0.0.6
+# Data Processing & Validation
+pydantic>=2.11.0
+python-dotenv>=1.0.0
+python-multipart>=0.0.6
+numpy>=2.1.0
+regex>=2024.0.0
 
-# Additional utilities (if needed)
-numpy>=1.21.0
-regex>=2023.0.0
+# HTTP & API
+requests>=2.32.0
+
+# ML Dependencies
+tokenizers>=0.21.0
+huggingface-hub>=0.34.0
+safetensors>=0.5.0
+
+# Google API
+google-auth>=2.40.0
+google-api-core>=2.25.0
+
+# File Processing
+PyYAML>=6.0.0
