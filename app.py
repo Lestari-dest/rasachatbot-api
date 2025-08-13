@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="RasaChatbot API",
-    description="Enhanced Natural Adaptive Chatbot with Emotion Analysis",
-    version="1.0.0"
+    description="Enhanced Natural Adaptive Chatbot with Emotion Analysis v2",
+    version="2.0.0"
 )
 
 # CORS middleware untuk Flutter
@@ -71,16 +71,20 @@ async def startup_event():
     """Initialize chatbot on startup"""
     global chatbot
     try:
-        model_name = os.getenv("MODEL_NAME", "tartarmee/indobert-sentiment-mental-health")
+        model_name = os.getenv("MODEL_NAME", "tartarmee/v2-indobert-sentiment-mental-health")
         gemini_api_key = os.getenv("GEMINI_API_KEY")
         
         if not gemini_api_key:
             raise ValueError("GEMINI_API_KEY environment variable not set")
         
         chatbot = RasaChatbot(model_name, gemini_api_key)
-        logger.info("✅ RasaChatbot initialized successfully")
+        logger.info("RasaChatbot initialized successfully")
+
+        # Tambah log sumber calibration   # NEW
+        src = "LOCAL(CALIB_JSON)" if os.getenv("CALIB_JSON") else f"HF:{os.getenv('CALIB_JSON_HF', 'calibration.json')}"
+        logger.info(f"Model: {model_name} | Calibration source: {src}")  # NEW
     except Exception as e:
-        logger.error(f"❌ Failed to initialize chatbot: {e}")
+        logger.error(f"Failed to initialize chatbot: {e}")
         raise
 
 @app.get("/", response_model=HealthResponse)
@@ -182,8 +186,8 @@ if __name__ == "__main__":
     # Cloud Run sets PORT environment variable
     port = int(os.environ.get("PORT", 8080))
     
-    print(f"🚀 Starting RasaChatbot on 0.0.0.0:{port}")
-    print(f"🌐 Environment: {os.environ.get('ENVIRONMENT', 'production')}")
+    print(f"Starting RasaChatbot on 0.0.0.0:{port}")
+    print(f"Environment: {os.environ.get('ENVIRONMENT', 'production')}")
     
     uvicorn.run(
         "app:app",
@@ -192,3 +196,4 @@ if __name__ == "__main__":
         reload=False,
         log_level="info"
     )
+
