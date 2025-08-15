@@ -10,7 +10,7 @@ import google.generativeai as genai
 
 class RasaChatbot:
     def __init__(self, model_name: str, gemini_api_key: str):
-        print("v2 Initializing RasaChatbot (calibrated sentiment)…")
+        print("v2.1 Initializing RasaChatbot (calibrated sentiment)…")
         self.model_name = model_name
         hf_token = os.getenv("HUGGING_FACE_HUB_TOKEN", None)
 
@@ -32,7 +32,7 @@ class RasaChatbot:
                 with open(downloaded, "r") as f:
                     self.calib = json.load(f)
             except Exception as e:
-                print(f"calibration.json not found on Hub ({fname}). Using defaults. Error: {e}")
+                print(f"⚠️ calibration.json not found on Hub ({fname}). Using defaults. Error: {e}")
                 self.calib = {
                     "labels": ["anger","happy","sadness","love","fear"],
                     "sadness_bias": 0.0, "delta_ang": 0.0, "delta_hap": 0.0, "delta_fear": 0.0, "pos_sad": 0.0,
@@ -47,7 +47,7 @@ class RasaChatbot:
         self.chat_model = genai.GenerativeModel("gemini-2.0-flash")
         self.chat_session = self.chat_model.start_chat(history=[])
 
-        # 5) Cue keywords & emoji (ringkas, selaras training)
+        # 5) Cue keywords & emoji (selaras training)
         self.ANGER = [r'\bmarah\b', r'\bkesal\b', r'\bkesel\b', r'\bjengkel\b', r'\bdongkol\b', r'\bsebal\b', r'\bsebel\b', r'\bgeram\b', r'\bbenci\b', r'\bmurka\b', r'\bemosi\b', r'\bngamuk\b']
         self.SAD   = [r'\bsedih\b', r'\bkecewa\b', r'\bterpuruk\b', r'\bgalau\b', r'\bmurung\b', r'\bhancur\b', r'\bpatah hati\b', r'\bdown\b', r'\bmenangis\b', r'\bnangis\b', r'\bduka(cita)?\b', r'\bterluka\b', r'\bsunyi\b', r'\bkesepian\b', r'\bsepi\b', r'\bputus asa\b', r'\bhampa\b']
         self.HAPPY = [r'\bbahagia\b', r'\bsenang\b', r'\bgembira\b', r'\bsuka\b', r'\bceria\b', r'\blega\b', r'\bpuas\b', r'\bsemangat\b', r'\bbersyukur\b']
@@ -74,10 +74,11 @@ class RasaChatbot:
         # >>> ADDED: state untuk rekomendasi & krisis
         self.last_reco_turn = -99           # turn terakhir rekomendasi muncul
         self.neg_streak = 0                 # jumlah turn negatif berturut-turut
-        self.reco_cooldown = 1              # jeda minimal antar rekomendasi
+        self.reco_cooldown = 2              # >>> CHANGED: jeda minimal antar rekomendasi (sebelumnya 1)
+        self.min_turn_for_reco = 3          # >>> ADDED: saran baru boleh muncul mulai turn ke-3
         self.current_sentiment = "neutral"  # cache emosi berjalan
-        
-        # 7) Response styles (tetap dari kode lama)
+
+        # 7) Response styles
         self.response_styles = {
             'sadness': {
                 'level_1': ["Kedengeran berat ya.", "Hmm, kayaknya lagi nggak enak.", "Pasti susah ya."],
@@ -135,8 +136,8 @@ class RasaChatbot:
                 "Kalau mau, kita coba labeling emosi: kasih nama perasaan yang paling dekat sekarang."
             ]
         }
-        
-        print("RasaChatbot ready.")
+
+        print("✅ RasaChatbot ready.")
 
     # ============ Helpers (cues & cleaning) ============
     def _has_emoji(self, s, charset): return any(ch in charset for ch in s)
@@ -170,8 +171,8 @@ class RasaChatbot:
         if flags["fer"]: cues.append("fearcue")
         if cues: t = t + " " + " ".join(cues)
         return t, flags
-        
-    # >>> ADDED: helper deteksi krisis & format rekomendasi
+
+    # >>> ADDED: helper deteksi krisis, minta tips, cooldown, rekomendasi, format, strip blok LLM
     def _is_crisis(self, text: str) -> bool:
         t = (text or "").lower()
         crisis_kw = [
@@ -179,6 +180,14 @@ class RasaChatbot:
             "self harm","melukai diri","nyakitin diri","menyakiti diri","putus asa banget"
         ]
         return any(k in t for k in crisis_kw)
+
+    def _user_requested_tips(self, text: str) -> bool:
+        t = (text or "").lower()
+        kws = [
+            "tips", "saran", "rekomendasi", "apa yang harus", "aku harus gimana",
+            "kasih masukan", "ada cara", "gimana caranya", "minta solusi"
+        ]
+        return any(k in t for k in kws)
 
     def _cooldown_ok(self) -> bool:
         return (self.turn_count - self.last_reco_turn) > self.reco_cooldown
@@ -194,10 +203,38 @@ class RasaChatbot:
 
     def _format_block(self, title: str, bullets: List[str]) -> str:
         if not bullets: return ""
+        # (Boleh ganti ke non-bold kalau ingin) → lines = [f"{title}:"]
         lines = [f"**{title}:**"]
         for b in bullets:
             lines.append(f"• {b}")
         return "\n".join(lines)
+
+    def _strip_llm_blocks(self, text: str) -> str:
+        """
+        Bersih-bersih kalau LLM masih kebablasan nulis 'Saran ringan:' atau 'Hotline:'.
+        Hilangkan heading & bullet-nya supaya backend yang kontrol.
+        """
+        lines = text.splitlines()
+        out = []
+        skip = False
+        for ln in lines:
+            header = ln.strip().lower()
+            if header.startswith("saran ringan") or header.startswith("**saran ringan"):
+                skip = True
+                continue
+            if header.startswith("hotline") or header.startswith("**hotline"):
+                skip = True
+                continue
+            if skip:
+                if ln.strip().startswith(("*", "•", "-")):
+                    continue
+                if ln.strip() == "":
+                    skip = False
+                    continue
+                # baris lain non-bullet → anggap mulai paragraf baru
+                skip = False
+            out.append(ln)
+        return "\n".join(out).strip()
 
     # ============ Sentiment (calibrated) ============
     def analyze_sentiment(self, text: str) -> Dict:
@@ -419,25 +456,16 @@ INSTRUKSI:
 6. Maksimal 1-2 kalimat untuk turn awal, bisa lebih panjang seiring progression
 7. Gunakan slang yang sama dengan user jika ada
 """
-        # >>> ADDED: kebijakan rekomendasi/krisis supaya LLM ikut format yang sama
+
+        # >>> CHANGED: LLM DILARANG menulis saran/hotline (backend yang kontrol)
         crisis_flag = self._is_crisis(user_input)
         policy = f"""
-Kebijakan Rekomendasi (WAJIB DIIKUTI):
-- Jika CRISIS=true: JANGAN beri tips biasa. Fokus dukungan singkat + berikan hotline Indonesia:
-  • SEJIWA 119 ext. 8 (dukungan psikologis awal)
-  • Halo Kemenkes 1500-567 (informasi/pengaduan kesehatan)
-  • SAPA 129 / WA 08111-129-129 (kekerasan perempuan & anak)
-  • Gawat darurat medis: PSC 119.
-- Jika CRISIS=false dan emosi ∈ {{sadness,fear,anger}} dengan confidence≥0.65:
-  Tambahkan blok 'Saran ringan' (maks 2 poin) berbasis teknik psikologi yang aman (napas 4-7-8, grounding 5-4-3-2-1, reframing kognitif, muscle relaxation).
-- Jika emosi ∈ {{happy,neutral}}: jangan beri saran kecuali diminta, atau ada transisi negatif→positif (beri 1 saran maintain mood).
-- Jika 2 turn berturut-turut emosi negatif ATAU user minta bantuan profesional:
-  Akhiri dengan 1 kalimat ajakan: “Mau aku hubungkan ke konselor di aplikasi ini?”
-Format keluaran:
-1) Paragraf respons empatik (1–3 kalimat).
-2) (Opsional) 'Saran ringan:' bullet pendek.
-3) (Opsional) Ajakan ke konselor.
-4) (Krisis) 'Hotline:' daftar ringkas di atas.
+Kebijakan Output (WAJIB IKUTI):
+- Fokus pada respons empatik natural (1–3 kalimat).
+- JANGAN menulis blok 'Saran ringan' atau 'Hotline' dalam bentuk apa pun.
+- JANGAN menulis bullet list.
+- Jika CRISIS=true, tetap hanya berikan dukungan empatik pendek (tanpa daftar kontak).
+- Hindari bahasa teknis; mirror gaya user seperlunya.
 CRISIS={str(crisis_flag).lower()}
 """
         prompt = f"{prompt}\n{policy}"
@@ -466,15 +494,31 @@ CRISIS={str(crisis_flag).lower()}
 
             response = self.chat_session.send_message(adaptive_prompt)
             response_text = response.text.strip()
+
+            # >>> ADDED: bersihkan kalau LLM masih bikin 'Saran ringan/Hotline'
+            response_text = self._strip_llm_blocks(response_text)
+
             mirrored_response = self.mirror_user_style(response_text, style_analysis)
 
-            # >>> ADDED: sisipkan blok rekomendasi/krisis/CTA konselor langsung ke response
+            # >>> MODIFIED: gate saran di awal, kontrol frekuensi, & no-duplicate
             confidence = float(sentiment_result.get('confidence', 1.0))
             is_crisis = self._is_crisis(user_input)
             blocks: List[str] = []
 
+            neg = {"sadness","fear","anger"}
+            turn_index = self.turn_count + 1  # turn yang sedang diproses (mulai dari 1)
+
+            # hitung boleh tidaknya rekomendasi
+            allow_reco = False
+            if not is_crisis:
+                asked = self._user_requested_tips(user_input)
+                meets_emo = (self.current_sentiment in neg) and (confidence >= 0.65)
+                meets_turn = (turn_index >= self.min_turn_for_reco)  # >>> ADDED: minimal turn
+                meets_cd = self._cooldown_ok()
+                allow_reco = asked or (meets_emo and meets_turn and meets_cd)
+
+            # 1) KRISIS → hotline saja (tanpa saran)
             if is_crisis:
-                # Krisis: hotline nasional
                 hotline = [
                     "SEJIWA 119 ext. 8 (dukungan psikologis awal nasional)",
                     "Halo Kemenkes 1500-567 (informasi/pengaduan kesehatan)",
@@ -483,21 +527,21 @@ CRISIS={str(crisis_flag).lower()}
                 ]
                 blocks.append(self._format_block("Hotline", hotline))
             else:
-                # Rekomendasi ringan hanya untuk emosi negatif + confidence cukup + cooldown
-                if current_sentiment in {"sadness","fear","anger"} and confidence >= 0.65 and self._cooldown_ok():
-                    recos = self._get_recommendations(current_sentiment, max_items=2)
+                # 2) Rekomendasi ringan (jika ALLOW_RECO)
+                if allow_reco:
+                    recos = self._get_recommendations(self.current_sentiment, max_items=2)
                     blocks.append(self._format_block("Saran ringan", recos))
-                    self.last_reco_turn = self.turn_count
+                    self.last_reco_turn = self.turn_count  # log sebelum increment
 
-                # Transisi negatif -> positif: beri 1 saran maintain mood
-                if transition and transition.startswith(("sadness", "fear", "anger")) and current_sentiment in {"happy","neutral"}:
+                # 3) Transisi negatif → positif: maintain mood (bukan krisis)
+                if transition and transition.startswith(("sadness","fear","anger")) and self.current_sentiment in {"happy","neutral"}:
                     blocks.append(self._format_block("Lanjutkan hal baik", self._get_recommendations("happy", 1)))
 
-                # Ajakan ke konselor jika negatif beruntun
-                if self._should_offer_counselor(current_sentiment):
+                # 4) Ajakan ke konselor jika negatif beruntun
+                if self._should_offer_counselor(self.current_sentiment):
                     blocks.append("**Butuh bantuan profesional?** Mau aku hubungkan ke **konselor** di aplikasi ini?")
 
-            # Susun final response (dalam satu string yang sama)
+            # susun final response (satu string)
             extra = ("\n\n" + "\n\n".join([b for b in blocks if b])).strip() if blocks else ""
             final_text = mirrored_response + (("\n\n" + extra) if extra else "")
 
@@ -538,8 +582,6 @@ CRISIS={str(crisis_flag).lower()}
             self.last_reco_turn = -99
             self.neg_streak = 0
             self.current_sentiment = "neutral"
-            print("Session reset")
+            print("🔄 Session reset")
         except Exception as e:
             print(f"Reset error: {e}")
-
-
