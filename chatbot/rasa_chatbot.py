@@ -10,7 +10,7 @@ import google.generativeai as genai
 
 class RasaChatbot:
     def __init__(self, model_name: str, gemini_api_key: str):
-        print("v3-inline Initializing RasaChatbot (calibrated sentiment, crisis & inline reco, style-aware)…")
+        print("v4-inline Initializing RasaChatbot (calibrated sentiment, crisis, pointer reco, style-aware)…")
         self.model_name = model_name
         hf_token = os.getenv("HUGGING_FACE_HUB_TOKEN", None)
 
@@ -35,7 +35,7 @@ class RasaChatbot:
                 with open(downloaded, "r") as f:
                     self.calib = json.load(f)
             except Exception as e:
-                print(f"⚠️ calibration.json not found on Hub ({fname}). Using defaults. Error: {e}")
+                print(f"calibration.json not found on Hub ({fname}). Using defaults. Error: {e}")
                 self.calib = {
                     "labels": ["anger","happy","sadness","love","fear"],
                     "sadness_bias": 0.0, "delta_ang": 0.0, "delta_hap": 0.0, "delta_fear": 0.0, "pos_sad": 0.0,
@@ -115,14 +115,17 @@ class RasaChatbot:
 
         # 8) Rekomendasi & Krisis config
         self.last_reco_turn = -10
-        self.reco_cooldown = 3
+        self.reco_cooldown = 3  # jeda minimal 3 turn
         self.EXPLICIT_RECO_WORDS = [
-            r'\brekomendasi\b', r'\bsaran\b', r'\btips\b', r'\bartikel\b',
-            r'\bbutuh bantuan\b', r'\bnomor darurat\b', r'\bhotline\b', r'\bpsikolog\b'
+            r'\brekomendasi\b', r'\bsaran\b', r'\btips\b', r'\bartikel\b', r'\bkonten\b', r'\bvideo\b',
+            r'\bbutuh bantuan\b', r'\bnomor darurat\b', r'\bhotline\b', r'\bpsikolog\b',
+            r'\bcari(kan)?\b.*\b(artikel|video|konten)\b', r'\b(artikel|video|konten)\b.*\bapa\b'
         ]
         self.SELF_HARM = [
             r'\bbunuh diri\b', r'\bakhiri hidup\b', r'\bgak mau hidup\b', r'\bcapek hidup\b',
-            r'\bmenyakiti diri\b', r'\bmelukai diri\b', r'\bnyakitin diri\b'
+            r'\bmenyakiti diri\b', r'\bmelukai diri\b', r'\bnyakitin diri\b',
+            r'\b(pengen|pingin|ingin|mau|pgn)\s*mati\b', r'\bmending\s*mati\b', r'\blebih baik\s*mati\b',
+            r'\bmau\s*mati\s*aja\b', r'\baku\s*(pengen|mau)\s*mati\b'
         ]
         self.HARM_OTHERS = [r'\bmelukai orang\b', r'\bmenyakiti orang\b', r'\bunuh .*(dia|mereka)\b']
         self.ABUSE = [r'\bdipukul\b', r'\bkekerasan\b', r'\bKDRT\b', r'\bdilecehkan\b', r'\bpelecehan\b']
@@ -133,7 +136,7 @@ class RasaChatbot:
             "(perlindungan perempuan & anak). Jika darurat sekarang juga, minta bantuan orang terdekat."
         )
 
-        print("✅ RasaChatbot inline style-aware ready.")
+        print("RasaChatbot inline pointer-reco ready.")
 
     # ============ Helpers (cues & cleaning) ============
     def _has_emoji(self, s, charset): return any(ch in charset for ch in s)
@@ -179,16 +182,20 @@ class RasaChatbot:
             with torch.no_grad():
                 logits = self.model(**enc).logits.squeeze(0)
 
-            # Kalibrasi logits sadness (index 2 pada default label)
-            logits[2] += float(self.calib.get("sadness_bias", 0.0))
+            # Kalibrasi sadness dengan index yang aman
+            try:
+                sad_idx = self.labels.index("sadness")
+            except ValueError:
+                sad_idx = 2  # fallback
+            logits[sad_idx] += float(self.calib.get("sadness_bias", 0.0))
             if flags["ang"] and not flags["sad"]:
-                logits[2] -= float(self.calib.get("delta_ang", 0.0))
+                logits[sad_idx] -= float(self.calib.get("delta_ang", 0.0))
             if flags["hap"] and not flags["sad"]:
-                logits[2] -= float(self.calib.get("delta_hap", 0.0))
+                logits[sad_idx] -= float(self.calib.get("delta_hap", 0.0))
             if flags["fer"] and not flags["sad"]:
-                logits[2] -= float(self.calib.get("delta_fear", 0.0))
+                logits[sad_idx] -= float(self.calib.get("delta_fear", 0.0))
             if flags["sad"]:
-                logits[2] += float(self.calib.get("pos_sad", 0.0))
+                logits[sad_idx] += float(self.calib.get("pos_sad", 0.0))
 
             probs = F.softmax(logits, dim=-1)
             confidence, idx = torch.max(probs, dim=0)
@@ -395,14 +402,16 @@ INSTRUKSI:
 5. Jika ada transisi emosi, sebutkan secara halus dan natural
 6. Maksimal 1–2 kalimat untuk turn awal, bisa lebih panjang seiring progression
 7. Hindari bullet/daftar dan jangan gunakan baris baru; rangkum dalam 1 paragraf saja.
+8. Jangan mengutip kalimat user dengan tanda "…" ; kalau perlu, parafrase saja.
 """
         return prompt
 
-    # ---------- FLATTENER (hapus newline, bullet, markdown) ----------
+    # ---------- FLATTENER (hapus newline, bullet, markdown, kutip lurus) ----------
     def _flatten(self, s: str) -> str:
         if not isinstance(s, str): s = str(s)
         s = s.replace("\r", " ").replace("\n", " ")
         s = s.replace("**", "").replace("*", "").replace("•", "").replace("—", "-")
+        s = s.replace('"', '”')  # hindari \" di JSON viewer
         s = re.sub(r'\s+', ' ', s)
         s = re.sub(r'\s+([,.;:!?])', r'\1', s)
         s = re.sub(r'(Saran ringan:)\s*(Saran ringan:)+', r'\1 ', s, flags=re.I)
@@ -428,6 +437,32 @@ INSTRUKSI:
         return (" Aku khawatir sama keselamatan kamu; kalau kamu merasa tidak aman sekarang, "
                 "prioritasnya keselamatan ya.")
 
+    # ---------- Split & Dedupe ----------
+    def _split_sentences(self, s: str) -> List[str]:
+        parts = re.split(r'(?<=[.!?])\s+', s.strip())
+        return [p.strip() for p in parts if p.strip()]
+
+    def _similar(self, a: str, b: str) -> bool:
+        if a == b: return True
+        aw = " ".join(a.split()[:6]); bw = " ".join(b.split()[:6])
+        if aw and aw == bw: return True
+        wa, wb = set(a.split()), set(b.split())
+        if len(wa) >= 3 and len(wb) >= 3:
+            j = len(wa & wb) / max(1, len(wa | wb))
+            if j > 0.75: return True
+        return False
+
+    def _dedupe_redundancy(self, s: str) -> str:
+        parts = self._split_sentences(s)
+        out, seen = [], []
+        for p in parts:
+            norm = re.sub(r'[“”"]', '', p.lower())
+            norm = re.sub(r'\s+', ' ', norm)
+            is_dup = any(self._similar(norm, re.sub(r'[“”"]', '', q.lower())) for q in seen)
+            if not is_dup:
+                out.append(p); seen.append(p)
+        return " ".join(out)
+
     # ---------- Rekomendasi & Krisis helpers ----------
     def _explicit_reco_requested(self, text: str) -> bool:
         t = text.lower()
@@ -449,44 +484,34 @@ INSTRUKSI:
         return all(s in neg for s in last)
 
     def _should_offer_reco(self, user_input: str, sentiment: str) -> bool:
-        if self._explicit_reco_requested(user_input): return True
-        if self.turn_count < 2: return False
-        if self.turn_count - self.last_reco_turn < self.reco_cooldown: return False
+        # boleh sejak awal kalau user minta eksplisit
+        if self._explicit_reco_requested(user_input): 
+            return True
+        # tunda sampai turn >= 3 kalau bukan permintaan eksplisit
+        if self.turn_count < 3: 
+            return False
+        # anti-spam
+        if self.turn_count - self.last_reco_turn < self.reco_cooldown: 
+            return False
+        # emosi negatif atau streak negatif
         if sentiment in {'sadness','fear','anger'} or self._negative_streak(2):
             return True
         return False
 
     def _build_recommendation_inline(self, sentiment: str, asked: bool, empathy_level: int) -> str:
-        bank = {
-            'fear': [
-                "coba napas 4-4-4 satu–dua menit",
-                "tulis satu langkah kecil yang bisa kamu ambil sekarang"
-            ],
-            'sadness': [
-                "lakukan aktivitas mini 5 menit seperti mandi hangat atau jalan ringan",
-                "tulis satu hal yang bikin kamu tetap bertahan hari ini"
-            ],
-            'anger': [
-                "ambil jeda 90 detik untuk nenangin tubuh",
-                "bedakan yang bisa kamu kontrol dan yang tidak"
-            ],
-            'love': [
-                "kalau nyaman, pakai format 'aku merasa..., karena...'",
-                "jaga batas sehat dengan komunikasi jujur"
-            ],
-            'happy': [
-                "rayakan momen kecil dan simpan catatannya",
-                "bagikan kabar baik ke orang yang kamu percaya"
-            ],
-            'neutral': [
-                "kalau mau, ceritakan sedikit detail biar aku bisa bantu lebih pas",
-                "tarik napas pelan beberapa kali sambil minum air"
-            ]
+        # pointer judul/topik (biar user cari sendiri)
+        pointer_bank = {
+            'fear': ["teknik napas 4-4-4", "grounding 5-4-3-2-1", "langkah kecil atasi cemas"],
+            'sadness': ["aktivitas mini 5 menit", "self-compassion langkah awal", "gratitude 3 hal"],
+            'anger': ["time-out 90 detik", "I-message untuk ungkap emosi", "hal yang bisa kukontrol vs tidak"],
+            'love': ["komunikasi asertif 2 kalimat", "boundaries sehat dalam relasi"],
+            'happy': ["jurnal syukur 3 hal", "merayakan kemenangan kecil"],
+            'neutral': ["wheel of emotion", "identifikasi kebutuhan diri sederhana"]
         }
-        tips = bank.get(sentiment, bank['neutral'])
-        preface = self._preface_reco(sentiment, asked, empathy_level)
-        body = "; ".join(tips) + "."
-        return preface + body
+        items = pointer_bank.get(sentiment, pointer_bank['neutral'])[:3]
+        pre = self._preface_reco(sentiment, asked, empathy_level)
+        body = "coba cari tentang '" + "', '".join(items[:-1]) + "', atau '" + items[-1] + "'."
+        return pre + body
 
     def _build_hotline_inline(self) -> str:
         return (self._preface_hotline() + " " + self.HOTLINES_ID + " Kamu aman sekarang?")
@@ -511,7 +536,7 @@ INSTRUKSI:
             response_text = response.text.strip()
             mirrored_response = self.mirror_user_style(response_text, style_analysis)
 
-            # Krisis & rekomendasi (inline)
+            # Krisis & rekomendasi (inline, pointer)
             crisis = self._detect_crisis(user_input)
             asked  = self._explicit_reco_requested(user_input)
             if crisis['is_crisis']:
@@ -519,12 +544,14 @@ INSTRUKSI:
                 mirrored_response = self.mirror_user_style(base + "." + self._build_hotline_inline(), style_analysis)
             else:
                 offer = self._should_offer_reco(user_input, current_sentiment)
-                if offer or asked:
+                if offer:
                     reco_inline = self._build_recommendation_inline(current_sentiment, asked, self.get_empathy_level())
                     mirrored_response = self.mirror_user_style(mirrored_response + " " + reco_inline, style_analysis)
                     self.last_reco_turn = self.turn_count
 
-            # Paksa satu paragraf bersih
+            # Satu paragraf bersih + dedupe
+            mirrored_response = self._flatten(mirrored_response)
+            mirrored_response = self._dedupe_redundancy(mirrored_response)
             mirrored_response = self._flatten(mirrored_response)
 
             # Memory & state
@@ -567,6 +594,6 @@ INSTRUKSI:
                 'openness_level': 1
             }
             self.last_reco_turn = -10
-            print("🔄 Session reset")
+            print("Session reset")
         except Exception as e:
             print(f"Reset error: {e}")
