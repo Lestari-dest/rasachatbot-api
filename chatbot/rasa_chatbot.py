@@ -380,7 +380,7 @@ class RasaChatbot:
     # ======== Krisis detection & referral (lembut) ========
     def _detect_crisis(self, text: str) -> bool:
         t = text.lower()
-        return any(re.search(p, t) for p in self.CRISIS_PATTERNS))
+        return any(re.search(p, t) for p in self.CRISIS_PATTERNS)
 
     def _crisis_referral(self, style_analysis: Dict) -> str:
         """
@@ -633,3 +633,4 @@ OUTPUT:
             print("🔄 Session reset")
         except Exception as e:
             print(f"Reset error: {e}")
+
