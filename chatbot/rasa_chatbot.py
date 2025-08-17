@@ -10,7 +10,7 @@ import google.generativeai as genai
 
 class RasaChatbot:
     def __init__(self, model_name: str, gemini_api_key: str):
-        print("v2.1 Initializing RasaChatbot (calibrated sentiment, humanized)…")
+        print("v2 Initializing RasaChatbot (calibrated sentiment)…")
         self.model_name = model_name
         hf_token = os.getenv("HUGGING_FACE_HUB_TOKEN", None)
 
@@ -19,7 +19,7 @@ class RasaChatbot:
         self.model     = AutoModelForSequenceClassification.from_pretrained(model_name, use_auth_token=hf_token)
         self.model.eval()
 
-        # 2) Load calibration (local > HF > default)
+        # 2) Load calibration (lokal > HF > default)
         calib_path = os.getenv("CALIB_JSON")
         self.calib = None
         if calib_path and os.path.exists(calib_path):
@@ -39,7 +39,7 @@ class RasaChatbot:
                     "max_length": 192
                 }
 
-        # 3) Label order mengikuti kalibrasi
+        # 3) Label order mengikuti kalibrasi (WAJIB konsisten dengan training)
         self.labels = self.calib.get("labels", ["anger","happy","sadness","love","fear"])
 
         # 4) Gemini
@@ -47,7 +47,7 @@ class RasaChatbot:
         self.chat_model = genai.GenerativeModel("gemini-2.0-flash")
         self.chat_session = self.chat_model.start_chat(history=[])
 
-        # 5) Cue keywords & emoji
+        # 5) Cue keywords & emoji (ringkas, selaras training)
         self.ANGER = [r'\bmarah\b', r'\bkesal\b', r'\bkesel\b', r'\bjengkel\b', r'\bdongkol\b', r'\bsebal\b', r'\bsebel\b', r'\bgeram\b', r'\bbenci\b', r'\bmurka\b', r'\bemosi\b', r'\bngamuk\b']
         self.SAD   = [r'\bsedih\b', r'\bkecewa\b', r'\bterpuruk\b', r'\bgalau\b', r'\bmurung\b', r'\bhancur\b', r'\bpatah hati\b', r'\bdown\b', r'\bmenangis\b', r'\bnangis\b', r'\bduka(cita)?\b', r'\bterluka\b', r'\bsunyi\b', r'\bkesepian\b', r'\bsepi\b', r'\bputus asa\b', r'\bhampa\b']
         self.HAPPY = [r'\bbahagia\b', r'\bsenang\b', r'\bgembira\b', r'\bsuka\b', r'\bceria\b', r'\blega\b', r'\bpuas\b', r'\bsemangat\b', r'\bbersyukur\b']
@@ -71,7 +71,7 @@ class RasaChatbot:
         }
         self.confidence_threshold = 0.65
 
-        # 7) Response styles (dipakai sebagai “rasa”, tapi nanti di-recipe dan di-randomize)
+        # 7) Response styles (tetap dari kode lama)
         self.response_styles = {
             'sadness': {
                 'level_1': ["Kedengeran berat ya.", "Hmm, kayaknya lagi nggak enak.", "Pasti susah ya."],
@@ -104,15 +104,6 @@ class RasaChatbot:
                 'level_3': ["Menarik juga. Aku penasaran sama pemikiran kamu tentang hal ini."]
             }
         }
-
-        # 8) Krisis: frasa berisiko (non-diagnostik, untuk rujukan saja)
-        self.CRISIS_PATTERNS = [
-            r'\b(pengen|ingin|mau)\s*(mati|mengakhiri|ngakhirin)\b',
-            r'\b(gak|tidak)\s*ada\s*harapan\b',
-            r'\bnyakitin\s*diri\b|\bself[- ]?harm\b',
-            r'\bbunuh\s*diri\b|\bsuicide\b',
-            r'\baku\s*berbahaya\s*buat\s*(diri|orang)\b',
-        ]
 
         print("✅ RasaChatbot ready.")
 
@@ -233,29 +224,35 @@ class RasaChatbot:
     def create_natural_transition_comment(self, transition: str) -> str:
         transition_map = {
             'sadness → happy': random.choice([
-                "Seneng denger kamu udah lebih lega.",
-                "Asik, pelan-pelan ngerasa lebih baik ya."
+                "Seneng deh denger kamu udah lebih baik!",
+                "Asik banget! Kedengeran udah mulai membaik ya.",
+                "Alhamdulillah ya udah mulai happy lagi."
             ]),
             'anger → happy': random.choice([
-                "Syukur bisa lebih adem sekarang.",
-                "Asik, rasanya udah nggak seketat tadi ya."
+                "Asik banget! Seneng deh denger kamu udah lebih lega.",
+                "Kedengeran udah nggak kesel lagi ya. Seneng banget!",
+                "Syukur ya udah mulai happy lagi."
             ]),
             'anger → sadness': random.choice([
-                "Dari kesel jadi kerasa sedih, ya.",
-                "Kayaknya sekarang beratnya lebih ke sedih."
+                "Hmm, kayaknya dari kesel jadi sedih ya.",
+                "Sekarang lebih ke sedih gitu ya."
             ]),
             'fear → happy': random.choice([
-                "Lega ya bisa bernafas lebih tenang.",
-                "Asik, deg-degannya mulai turun."
+                "Asik! Kedengeran udah nggak deg-degan lagi.",
+                "Seneng deh udah nggak khawatir lagi.",
+                "Alhamdulillah ya udah lega."
             ]),
             'sadness → anger': random.choice([
-                "Kadang dari sedih bisa jadi kesal juga, wajar kok.",
+                "Hmm, dari sedih jadi kesel gitu ya.",
+                "Sekarang malah jadi emosi ya."
             ]),
             'happy → sadness': random.choice([
-                "Eh, mood-nya agak turun ya.",
+                "Eh, kok jadi sedih lagi?",
+                "Hmm, kayaknya mood-nya turun lagi ya."
             ]),
             'love → sadness': random.choice([
-                "Perasaan hangatnya sempat ada, terus jadi berat lagi ya.",
+                "Hmm, dari bahagia jadi sedih ya.",
+                "Kayaknya ada yang bikin berat lagi."
             ])
         }
         return transition_map.get(transition, "")
@@ -280,126 +277,130 @@ class RasaChatbot:
         elif self.turn_count <= 5 or openness <= 2: return 2
         else: return 3
 
-    # ======== Humanizing components (baru) ========
-    def _maybe_micro_story(self, sentiment: str) -> Optional[str]:
-        """
-        Cerita pendek (1-2 kalimat), kadang-kadang saja supaya terasa manusiawi.
-        Frekuensi kecil saat awal (turn<=2) dan meningkat sedikit setelahnya.
-        """
-        chance = 0.10 if self.turn_count <= 2 else 0.20
-        if random.random() > chance: 
-            return None
-        bank = {
-            'sadness': [
-                "Dulu aku pernah ngerasain hari-hari yang rasanya berat banget juga; waktu itu aku mulai dari hal kecil—rapihin tempat tidur tiap pagi—aneh tapi bikin ada rasa kendali sedikit.",
-                "Aku pernah ngelewatin masa yang bikin lelah batin; pelan-pelan, jalan sore tanpa headset malah bantu aku dengerin diri sendiri."
-            ],
-            'anger': [
-                "Aku juga pernah kebawa emosi sama hal sepele; nafas 4-4-6 waktu itu nolong aku buat nggak meledak.",
-                "Pernah banget aku kesel sama orang deket; nulis draft pesan dulu di notes bikin aku nggak nyesel setelahnya."
-            ],
-            'fear': [
-                "Aku pernah ngerasa deg-degan tanpa alasan jelas; waktu itu aku ngecek realita dengan nulis tiga hal yang benar-benar terjadi saat itu.",
-                "Rasa was-was itu aku kenal; ngitung pelan 5 benda yang kelihatan di sekitar lumayan nurunin tegang."
-            ],
-            'happy': [
-                "Momen kecil yang bikin seneng itu suka datang pas nggak diduga; nyimpen di catatan syukur bikin aku inget pas lagi turun.",
-                "Asik ya, rasa lega gini sering jadi titik mulai buat langkah kecil berikutnya."
-            ],
-            'love': [
-                "Perasaan hangat ke seseorang pernah bikin aku berani jujur pelan-pelan; ternyata ritme yang nyaman buat dua pihak itu kunci.",
-                "Aku pernah ngerasa deg-degan manis; nulis tiga hal yang aku apresiasi bikin perasaan makin jelas."
-            ],
-            'neutral': [
-                "Kadang momen netral justru enak buat nyusun langkah; aku suka mulai dari pertanyaan kecil: ‘Satu hal yang mau aku rasakan dari hari ini apa?’",
-                "Ada hari-hari yang datar; biasanya aku pilih satu tugas 5 menit biar mesin nyala dulu."
-            ]
-        }
-        return random.choice(bank.get(sentiment, bank['neutral']))
+    def mirror_user_style(self, base_response: str, style_analysis: Dict) -> str:
+        response = base_response
+        pronouns = style_analysis.get('pronouns', self.user_personality_profile['preferred_pronouns'])
+        if pronouns == 'gue': response = response.replace('aku', 'gue')
+        elif pronouns == 'saya': response = response.replace('aku', 'saya')
 
-    def _safe_recommendations(self, sentiment: str) -> str:
-        """
-        Rekomendasi ringan, aman, dan opsional. 1-2 butir.
-        """
-        base = {
-            'sadness': [
-                "Coba ‘grounding 5-4-3-2-1’ sebentar untuk nyambung ke sekitar.",
-                "Kalau kuat, keluar sebentar cari cahaya/udara, terus minum air hangat."
-            ],
-            'anger': [
-                "Tarik nafas 4 detik, tahan 4, hembus 6; ulang 5 kali.",
-                "Tunda balas chat/telepon dengan draft; kirim setelah 30 menit."
-            ],
-            'fear': [
-                "Coba ucapkan pelan 3 hal yang *benar-benar* kamu lihat/dengar/rasakan saat ini.",
-                "Batasi konsumsi berita/scroll 15 menit, lalu evaluasi perasaan lagi."
-            ],
-            'happy': [
-                "Catat satu hal yang bikin kamu bangga hari ini.",
-                "Simpan momen ini; kirim ‘terima kasih’ ke diri sendiri."
-            ],
-            'love': [
-                "Kalau mau, tulis pesan simpel yang jujur dan ringan.",
-                "Jaga ritme: bagikan cerita secukupnya, dengar balik responnya."
-            ],
-            'neutral': [
-                "Pilih tugas 5 menit (mis. rapikan meja kecil).",
-                "Minum air, tarik nafas dalam 3 kali, lalu cek ulang prioritas."
-            ]
-        }
-        picks = random.sample(base.get(sentiment, base['neutral']), k=1)
-        return "Saran ringan: " + "; ".join(picks)
+        ex_level = style_analysis.get('exclamation_level', 'low')
+        if ex_level == 'high' and '.' in response: response = response.replace('.', '!')
+        elif ex_level == 'medium' and response.count('!') == 0:
+            if response.endswith('.'): response = response[:-1] + '!'
 
-    def _should_attach_reco(self, sentiment: str) -> bool:
-        """
-        Tidak selalu memberi rekomendasi; peluang naik kalau user mengeluh/negatif.
-        """
-        base_chance = {
-            'sadness': 0.6, 'anger': 0.6, 'fear': 0.6,
-            'neutral': 0.3, 'love': 0.25, 'happy': 0.25
-        }
-        # Awal percakapan jangan terlalu ‘mengarahkan’
-        if self.turn_count <= 1:
-            return random.random() < (base_chance.get(sentiment, 0.3) * 0.5)
-        return random.random() < base_chance.get(sentiment, 0.3)
+        if style_analysis.get('uses_repetition'):
+            response = re.sub(r'\bbanget\b', 'bangettt', response)
+            response = re.sub(r'\basik\b', 'asikk', response)
 
-    def _gentle_distance_phrase(self) -> str:
-        """
-        Agar tidak terasa ‘terlalu dekat’ di awal.
-        """
-        choices = [
-            "Kalau kamu berkenan, ceritain pelan-pelan aja.",
-            "Aku dengerin dari sini, nggak buru-buru kok.",
-            "Boleh sepatah dua patah dulu, senyaman kamu."
+        if style_analysis.get('uses_emoji') and self.user_personality_profile['emoji_usage']:
+            if not re.search(r'[😀-🙏]', response):
+                emoji_map = {'happy':' 😊','sadness':' 😔','love':' 🥰','anger':' 😤','fear':' 😰','neutral':' 🙂'}
+                response += emoji_map.get(getattr(self, 'current_sentiment', 'neutral'), '')
+        return response
+
+    def update_short_term_memory(self, user_input: str, bot_response: str, sentiment: str):
+        self.short_term_memory.append({'user': user_input, 'bot': bot_response, 'sentiment': sentiment, 'turn': self.turn_count})
+        if len(self.short_term_memory) > 10: self.short_term_memory.pop(0)
+
+    def get_memory_context(self) -> str:
+        if not self.short_term_memory: return ""
+        parts = []
+        for m in self.short_term_memory[-5:]:
+            parts.append(f"User pernah bilang: '{m['user']}' (emosi: {m['sentiment']})")
+        return "Konteks percakapan sebelumnya: " + " | ".join(parts) if parts else ""
+
+    def detect_transition(self, current_sentiment: str) -> Optional[str]:
+        if self.previous_sentiment and self.previous_sentiment != current_sentiment:
+            return f"{self.previous_sentiment} → {current_sentiment}"
+        return None
+    
+    def should_give_recommendation(self, user_input: str, current_sentiment: str) -> bool:
+    # """Deteksi apakah user butuh rekomendasi"""
+        user_lower = user_input.lower()
+        
+        # Explicit request patterns
+        request_patterns = [
+            r'\bsaran\b', r'\brekomendasi\b', r'\btips\b', r'\bsolusi\b',
+            r'\bgimana ya\b', r'\bharus apa\b', r'\bapa yang harus\b',
+            r'\btolong\b.*\bbantu\b', r'\bbantu\b.*\bdong\b',
+            r'\bgimana cara\b', r'\bbiar\b.*\bbisa\b'
         ]
-        # Lebih banyak ‘jarak’ di 2 turn pertama
-        return random.choice(choices if self.turn_count <= 2 else choices + [
-            "Ambil tempo yang nyaman buatmu, aku ngikutin."
-        ])
+        
+        # Check explicit request
+        for pattern in request_patterns:
+            if re.search(pattern, user_lower):
+                return True
+        
+        # Check implicit need based on sentiment persistence
+        if len(self.short_term_memory) >= 3:
+            recent_sentiments = [m['sentiment'] for m in self.short_term_memory[-3:]]
+            negative_sentiments = ['sadness', 'anger', 'fear']
+            
+            # If negative sentiment persists for 3+ turns
+            if all(s in negative_sentiments for s in recent_sentiments):
+                if self.turn_count >= 5:  # After building rapport
+                    return True
+        
+        # Check for stuck patterns
+        if self.turn_count >= 4:
+            recent_messages = [m['user'].lower() for m in self.short_term_memory[-3:]]
+            # If user keeps saying similar things (stuck in loop)
+            if len(set(recent_messages)) == 1 or \
+            all('bingung' in msg or 'gatau' in msg for msg in recent_messages):
+                return True
+                
+        return False
 
-    # ======== Krisis detection & referral (lembut) ========
-    def _detect_crisis(self, text: str) -> bool:
-        t = text.lower()
-        return any(re.search(p, t) for p in self.CRISIS_PATTERNS)
+    def generate_contextual_recommendation(self, user_input: str, current_sentiment: str) -> str:
+    # """Generate recommendation using Gemini based on context"""
+    
+        # Build comprehensive context
+        memory_context = ""
+        if self.short_term_memory:
+            conversations = []
+            for m in self.short_term_memory[-5:]:
+                conversations.append(f"User: {m['user']} (emosi: {m['sentiment']})")
+            memory_context = "Percakapan sebelumnya:\n" + "\n".join(conversations)
+        
+        recommendation_prompt = f"""
+    Berdasarkan konteks curhat berikut, berikan 1-2 rekomendasi yang sangat spesifik dan actionable.
 
-    def _crisis_referral(self, style_analysis: Dict) -> str:
-        """
-        Rujukan lembut saat krisis. Tidak menggurui, langsung to-the-point tapi hangat.
-        (Tanpa nomor spesifik — silakan sesuaikan di layer UI/produk jika perlu.)
-        """
-        pron = style_analysis.get('pronouns', 'aku')
-        # Kalimat singkat, non-judgmental:
-        lines = [
-            "Aku khawatir sama keselamatanmu.",
-            "Kalau kamu merasa berisiko melukai diri/ada bahaya sekarang, minta bantuan langsung ya.",
-            "Hubungi layanan darurat setempat, tenaga kesehatan jiwa, atau orang tepercaya di dekatmu.",
-        ]
-        # Variasi gaya:
-        if pron == 'saya':
-            lines[0] = "Saya khawatir dengan keselamatan Anda."
-        return " ".join(lines)
+    {memory_context}
 
-    # ======== Prompt builder ========
+    User terakhir bilang: "{user_input}"
+    Emosi dominan: {current_sentiment}
+
+    ATURAN REKOMENDASI:
+    1. Sangat spesifik sesuai masalah user
+    2. Praktis dan bisa langsung dilakukan
+    3. Gunakan bahasa casual Indonesia
+    4. Format: langsung rekomendasi tanpa pembuka formal
+    5. Maksimal 2-3 kalimat
+    6. Sesuaikan dengan emosi (jangan terlalu ceria kalau user sedih)
+    7. Fokus pada small steps yang realistis
+
+    Contoh format yang bagus:
+    - Untuk sedih: "Coba deh mulai dengan nulis 3 hal kecil yang bikin kamu bersyukur hari ini di notes HP. Atau mungkin jalan kaki bentar 10 menit aja di sekitar rumah buat refresh pikiran."
+    - Untuk marah: "Mungkin bisa coba teknik napas 4-7-8 dulu ya - tarik napas 4 detik, tahan 7 detik, buang 8 detik. Atau tulis semua yang bikin kesel di kertas terus sobek-sobek kertasnya."
+
+    Berikan rekomendasi yang relevan dan membantu:
+    """
+        
+        try:
+            rec_response = self.chat_model.generate_content(recommendation_prompt)
+            return rec_response.text.strip()
+        except Exception as e:
+            print(f"Error generating recommendation: {e}")
+            # Fallback recommendations
+            fallback = {
+                'sadness': "Coba deh nulis perasaan kamu di jurnal atau notes HP. Kadang dengan nulis, beban jadi lebih ringan.",
+                'anger': "Mungkin bisa coba ambil napas dalam-dalam dulu atau jalan kaki sebentar buat cooling down.",
+                'fear': "Coba fokus ke hal-hal yang bisa kamu kontrol aja dulu. Bikin list kecil apa yang bisa kamu lakukan hari ini.",
+                'happy': "Mantap! Mungkin bisa diabadikan momen ini di jurnal biar bisa jadi reminder kalau lagi down.",
+                'love': "Sweet banget! Mungkin bisa ekspresikan perasaan ini dengan gesture kecil yang meaningful."
+            }
+            return fallback.get(current_sentiment, "Coba ambil waktu sejenak untuk refleksi diri ya.")
+
     def create_adaptive_prompt(self, user_input: str, current_sentiment: str, transition: Optional[str], style_analysis: Dict) -> str:
         empathy_level = self.get_empathy_level()
         if current_sentiment in self.response_styles:
@@ -411,134 +412,55 @@ class RasaChatbot:
         memory_context = self.get_memory_context()
         transition_comment = self.create_natural_transition_comment(transition) if transition else ""
 
-        # ——— Resep respons (diacak) ———
-        recipes = [
-            # 1) Validasi singkat + ajakan pelan
-            "Mulai dengan validasi hangat 1 kalimat, lanjutkan 1 pertanyaan terbuka yang ringan.",
-            # 2) Parafrase + refleksi perasaan
-            "Parafrase inti cerita user dengan kata berbeda, lalu sebutkan perasaan yang mungkin dirasakan.",
-            # 3) Pikiran & tubuh
-            "Tunjukkan kamu memperhatikan sinyal tubuh/energi (mis. lelah/tegang) dan beri ruang.",
-            # 4) Presence minimal
-            "Jawab pendek tapi hangat, tanpa memaksa user untuk menjelaskan panjang.",
-            # 5) Problem–free talk
-            "Ajak bahas satu momen kecil yang terasa aman/neutral sebelum menyentuh masalah inti.",
-        ]
-        picked_recipe = random.choice(recipes)
-
-        # Instruksi gaya & guardrails ke LLM
         style_instructions = f"""
-GAYA USER:
-- Pronoun: {style_analysis.get('pronouns', 'aku')}
-- Tanda seru: {style_analysis.get('exclamation_level', 'low')}
-- Repetisi: {style_analysis.get('uses_repetition', False)}
-- Emoji: {style_analysis.get('uses_emoji', False)}
-- Slang: {', '.join(style_analysis.get('slang_words', [])) or '-'}
-- Panjang pesan user: {style_analysis.get('message_length', 'medium')}
-
-RESEP RESPON (acak):
-- {picked_recipe}
-
-ATURAN PANJANG:
-- Jika user pendek → 1 kalimat (maks 16 kata).
-- Jika user sedang → 1–2 kalimat.
-- Jika user panjang → 2–4 kalimat.
-- Hindari bullet/angka; jangan terlihat seperti sistem.
-
-VARIASI:
-- Jangan ulang pola/frasa persis dari respons sebelumnya.
-- Jika sesuai, sisipkan 1 metafora ringan atau peribahasa singkat (opsional).
-- Hindari “kayaknya lagi susah banget ya” berulang; gunakan padanan alami lain.
-
-REKOMENDASI:
-- Rekomendasi hanya jika bermanfaat & aman; maksimal 1 kalimat, tanpa menggurui.
-- Jangan berikan saran medis/diagnosis. Hindari menyebut obat atau tindakan berisiko.
+Gaya komunikasi user:
+- Pronouns: {style_analysis.get('pronouns', 'aku')}
+- Exclamation level: {style_analysis.get('exclamation_level', 'low')}
+- Uses repetition: {style_analysis.get('uses_repetition', False)}
+- Uses emoji: {style_analysis.get('uses_emoji', False)}
+- Slang words: {', '.join(style_analysis.get('slang_words', []))}
+- Message length: {style_analysis.get('message_length', 'medium')}
 """
-
-        # Catatan: micro-story & rekomendasi akan disuntik setelah model merespons.
+    # pengecekan rekomendasi
+        should_recommend = self.should_give_recommendation(user_input, current_sentiment)
+        recommendation_note = ""
+        if should_recommend:
+            recommendation_note = """
+    Note: User sepertinya butuh saran/rekomendasi. Tapi JANGAN berikan saran di response ini, 
+    karena akan digenerate terpisah. Fokus pada empati dan validasi perasaan saja.
+    """
         prompt = f"""
-Kamu adalah pendengar yang empatik dan terasa manusiawi (tidak kaku).
-Tugasmu menanggapi pesan user secara natural dan hangat.
+Kamu adalah chatbot empati yang sangat natural dan adaptif.
 
 {memory_context}
 
-User: "{user_input}"
-Emosi dominan (dari model): {current_sentiment}
+User berkata: "{user_input}"
+Emosi user: {current_sentiment} (confidence: medium)
 Empathy level: {empathy_level}/3
 Turn ke: {self.turn_count + 1}
 
-Base style cue: "{base_style}"
-{f"Catat perubahan emosi: {transition_comment}" if transition_comment else ""}
-
 {style_instructions}
 
-OUTPUT:
-- Tulis respons final saja (tanpa label, tanpa daftar).
-- Gunakan gaya bahasa yang selaras dengan user.
-- Jaga jarak sosial yang sehat di awal; gunakan kalimat seperti: "{self._gentle_distance_phrase()}"
+Base response style: "{base_style}"
+
+{f"Transition comment: {transition_comment}" if transition_comment else ""}
+
+{recommendation_note}
+
+INSTRUKSI:
+1. Respons harus natural, hindari format data atau teknis
+2. Mirror gaya komunikasi user (pronoun, exclamation, repetition pattern)
+3. Sesuaikan panjang respons dengan message user
+4. Level empati: {"Simple validation" if empathy_level == 1 else "Deeper understanding" if empathy_level == 2 else "Meaningful connection"}
+5. Jika ada transisi emosi, sebutkan secara halus dan natural
+6. Maksimal 1-2 kalimat untuk turn awal, bisa lebih panjang seiring progression
+7. Gunakan slang yang sama dengan user jika ada
 """
         return prompt
 
-    # ======== Memory helpers ========
-    def update_short_term_memory(self, user_input: str, bot_response: str, sentiment: str):
-        self.short_term_memory.append({'user': user_input, 'bot': bot_response, 'sentiment': sentiment, 'turn': self.turn_count})
-        if len(self.short_term_memory) > 3: self.short_term_memory.pop(0)
-
-    def get_memory_context(self) -> str:
-        if not self.short_term_memory: return ""
-        parts = []
-        for m in self.short_term_memory[-2:]:
-            parts.append(f"User pernah bilang: '{m['user']}' (emosi: {m['sentiment']})")
-        return "Konteks percakapan sebelumnya: " + " | ".join(parts) if parts else ""
-
-    def detect_transition(self, current_sentiment: str) -> Optional[str]:
-        if self.previous_sentiment and self.previous_sentiment != current_sentiment:
-            return f"{self.previous_sentiment} → {current_sentiment}"
-        return None
-
-    # ======== Style mirroring ========
-    def mirror_user_style(self, base_response: str, style_analysis: Dict) -> str:
-        response = base_response.strip()
-
-        # Pronoun
-        pronouns = style_analysis.get('pronouns', self.user_personality_profile['preferred_pronouns'])
-        if pronouns == 'gue':
-            response = response.replace('aku', 'gue').replace('saya', 'gue')
-        elif pronouns == 'saya':
-            response = response.replace('aku', 'saya')
-
-        # Tanda seru
-        ex_level = style_analysis.get('exclamation_level', 'low')
-        if ex_level == 'high' and '.' in response: 
-            response = response.replace('.', '!')
-        elif ex_level == 'medium' and '!' not in response and response.endswith('.'):
-            response = response[:-1] + '!'
-
-        # Repetisi
-        if style_analysis.get('uses_repetition'):
-            response = re.sub(r'\bbanget\b', 'bangettt', response)
-            response = re.sub(r'\basik\b', 'asikk', response)
-
-        # Emoji (opsional, mengikuti user)
-        if style_analysis.get('uses_emoji') and self.user_personality_profile['emoji_usage']:
-            if not re.search(r'[😀-🙏]', response):
-                emoji_map = {'happy':' 😊','sadness':' 😔','love':' 🥰','anger':' 😤','fear':' 😰','neutral':' 🙂'}
-                response += emoji_map.get(getattr(self, 'current_sentiment', 'neutral'), '')
-
-        # Panjang respons menyesuaikan panjang user
-        msg_len = style_analysis.get('message_length', 'medium')
-        if msg_len == 'short':
-            # Pangkas ke ±1 kalimat
-            response = re.split(r'(?<=[.!?])\s+', response)[0]
-
-        return response
-
-    # ======== Chat utama (JSON tidak diubah) ========
     def chat(self, user_input: str) -> Dict:
         try:
             style_analysis = self.analyze_user_style(user_input)
-
-            # Special cases satu-liner
             special = self.handle_special_cases(user_input, style_analysis)
             if special:
                 mirrored = self.mirror_user_style(special, style_analysis)
@@ -549,59 +471,29 @@ OUTPUT:
                     'empathy_level': self.get_empathy_level()
                 }
 
-            # 1) Sentiment wajib lewat model
             sentiment_result = self.analyze_sentiment(user_input)
             current_sentiment = sentiment_result['dominant_sentiment']
             self.current_sentiment = current_sentiment
 
-            # 2) Update profil gaya
             self.update_personality_profile(style_analysis)
-
-            # 3) Transisi emosi
             transition = self.detect_transition(current_sentiment)
-
-            # 4) Krisis check (hanya rujukan lembut saat terdeteksi)
-            crisis_text = None
-            if self._detect_crisis(user_input):
-                crisis_text = self._crisis_referral(style_analysis)
-
-            # 5) Prompt adaptif ke LLM (tanpa memasukkan saran/cerita dulu)
             adaptive_prompt = self.create_adaptive_prompt(user_input, current_sentiment, transition, style_analysis)
+
             response = self.chat_session.send_message(adaptive_prompt)
-            response_text = (response.text or "").strip()
-
-            # 6) Sisipkan micro-story jika cocok
-            micro = self._maybe_micro_story(current_sentiment)
-            if micro:
-                # Tempel sebagai kalimat terakhir (maks 1-2 kalimat total kalau user pendek)
-                if style_analysis.get('message_length') == 'short':
-                    response_text = re.split(r'(?<=[.!?])\s+', response_text)[0]
-                response_text = response_text + (" " if response_text and not response_text.endswith(('.', '!', '?')) else " ") + micro
-
-            # 7) Tambahkan rekomendasi aman bila perlu
-            if self._should_attach_reco(current_sentiment):
-                reco = self._safe_recommendations(current_sentiment)
-                # Jaga nada agar tidak menggurui
-                softener = random.choice([
-                    "Kalau cocok buatmu, ",
-                    "Boleh dicoba pelan-pelan, ",
-                    "Opsional ya, "
-                ])
-                response_text = response_text + (" " if response_text else "") + softener + reco
-
-            # 8) Tambahkan rujukan krisis (paling akhir, singkat)
-            if crisis_text:
-                response_text = response_text + (" " if response_text else "") + crisis_text
-
-            # 9) Mirror gaya user
+            response_text = response.text.strip()
+            
+            # logika rekomendasi
+            should_recommend = self.should_give_recommendation(user_input, current_sentiment)
+            if should_recommend:
+                recommendation = self.generate_contextual_recommendation(user_input, current_sentiment)
+                # Integrate recommendation naturally into response
+                response_text = f"{response_text} {recommendation}"
             mirrored_response = self.mirror_user_style(response_text, style_analysis)
 
-            # 10) Memory & counters
             self.update_short_term_memory(user_input, mirrored_response, current_sentiment)
             self.previous_sentiment = current_sentiment
             self.turn_count += 1
 
-            # 11) JSON structure (TIDAK DIUBAH)
             return {
                 'response': mirrored_response,
                 'sentiment': current_sentiment,
@@ -630,6 +522,8 @@ OUTPUT:
                 'exclamation_tendency': 'low',
                 'openness_level': 1
             }
-            print("🔄 Session reset")
+            print("Session reset")
         except Exception as e:
             print(f"Reset error: {e}")
+
+
