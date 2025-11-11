@@ -44,7 +44,7 @@ class RasaChatbot:
 
         # 4) Gemini
         genai.configure(api_key=gemini_api_key)
-        self.chat_model = genai.GenerativeModel("gemini-2.0-flash")
+        self.chat_model = genai.GenerativeModel("gemini-2.5-flash")
         self.chat_session = self.chat_model.start_chat(history=[])
 
         # 5) Cue keywords & emoji (ringkas, selaras training)
@@ -855,4 +855,5 @@ class RasaChatbot:
             print("Session reset")
         except Exception as e:
             print(f"Reset error: {e}")
+
 
