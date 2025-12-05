@@ -10,6 +10,24 @@ import google.generativeai as genai
 
 class RasaChatbot:
     def __init__(self, model_name: str, gemini_api_key: str):
+        # daftar kata kunci emergency langsung di-hardcode
+        self.emergency_keywords = [
+            r'\bbunuh diri\b', r'\baku ingin mati\b', r'\bga sanggup\b',
+            r'\bputus asa\b', r'\bakhir hidup\b', r'\bself harm\b',
+            r'\bmenyakiti diri\b', r'\bmelukai diri\b', r'\bgak ada harapan\b',
+            r'\bhidup percuma\b', r'\blebih baik mati\b', r'\baku capek hidup\b',
+            r'\baku depresi\b', r'\baku stress banget\b', r'\baku ingin menghilang\b',
+            r'\btidak ada jalan keluar\b', r'\baku sendirian\b', r'\baku tidak berguna\b',
+            r'\bhidup hampa\b', r'\baku ingin menyerah\b'
+        ]
+
+        # daftar hotline Indonesia
+        self.hotlines = [
+            "Hotline darurat Kemenkes: 119 ext 8",
+            "Yayasan Pulih: (021) 7884 2566",
+            "Psikolog/psikiater terdekat"
+        ]
+        
         print("v3 Initializing RasaChatbot (calibrated sentiment)…")
         self.model_name = model_name
         hf_token = os.getenv("HUGGING_FACE_HUB_TOKEN", None)
@@ -240,6 +258,13 @@ class RasaChatbot:
         }
         print("RasaChatbot ready.")
 
+    #============= detect emergency ================
+    def detect_emergency(self, text: str) -> bool:
+        user_lower = text.lower()
+        if any(re.search(p, user_lower) for p in self.emergency_keywords):
+            return True
+        return False
+    
     # ============ Helpers (cues & cleaning) ============
     def _has_emoji(self, s, charset): return any(ch in charset for ch in s)
 
@@ -791,6 +816,28 @@ class RasaChatbot:
                             random.shuffle(self.response_styles[sentiment][level])
         
             style_analysis = self.analyze_user_style(user_input)
+
+            # deteksi bahaya reffer ke hotline dan tenaga ahli
+            if self.detect_emergency(user_input):
+            hotline_message = (
+                "Saya mendeteksi kamu sedang menyampaikan hal yang sangat serius. "
+                "Kalau kamu merasa tidak aman atau ingin menyakiti diri, "
+                "segera hubungi bantuan profesional:\n\n"
+                "- Hotline darurat Kemenkes: 119 ext 8\n"
+                "- Yayasan Pulih: (021) 7884 2566\n"
+                "- Atau psikolog/psikiater terdekat.\n\n"
+                "Kamu tidak sendirian, ada orang yang siap mendengarkan dan membantu."
+            )
+            return {
+                'response': hotline_message,
+                'sentiment': 'emergency',
+                'confidence': 1.0,
+                'transition': None,
+                'empathy_level': 3,
+                'style_analysis': style_analysis,
+                'special_case': True
+            }
+            
             special = self.handle_special_cases(user_input, style_analysis)
             if special:
                 mirrored = self.mirror_user_style(special, style_analysis)
@@ -855,5 +902,6 @@ class RasaChatbot:
             print("Session reset")
         except Exception as e:
             print(f"Reset error: {e}")
+
 
 
