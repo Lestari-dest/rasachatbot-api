@@ -819,24 +819,24 @@ class RasaChatbot:
 
             # deteksi bahaya reffer ke hotline dan tenaga ahli
             if self.detect_emergency(user_input):
-            hotline_message = (
-                "Saya mendeteksi kamu sedang menyampaikan hal yang sangat serius. "
-                "Kalau kamu merasa tidak aman atau ingin menyakiti diri, "
-                "segera hubungi bantuan profesional:\n\n"
-                "- Hotline darurat Kemenkes: 119 ext 8\n"
-                "- Yayasan Pulih: (021) 7884 2566\n"
-                "- Atau psikolog/psikiater terdekat.\n\n"
-                "Kamu tidak sendirian, ada orang yang siap mendengarkan dan membantu."
-            )
-            return {
-                'response': hotline_message,
-                'sentiment': 'emergency',
-                'confidence': 1.0,
-                'transition': None,
-                'empathy_level': 3,
-                'style_analysis': style_analysis,
-                'special_case': True
-            }
+                hotline_message = (
+                    "Saya mendeteksi kamu sedang menyampaikan hal yang sangat serius. "
+                    "Kalau kamu merasa tidak aman atau ingin menyakiti diri, "
+                    "segera hubungi bantuan profesional:\n\n"
+                    "- Hotline darurat Kemenkes: 119 ext 8\n"
+                    "- Yayasan Pulih: (021) 7884 2566\n"
+                    "- Atau psikolog/psikiater terdekat.\n\n"
+                    "Kamu tidak sendirian, ada orang yang siap mendengarkan dan membantu."
+                )
+                return {
+                    'response': hotline_message,
+                    'sentiment': 'emergency',
+                    'confidence': 1.0,
+                    'transition': None,
+                    'empathy_level': 3,
+                    'style_analysis': style_analysis,
+                    'special_case': True
+                }
             
             special = self.handle_special_cases(user_input, style_analysis)
             if special:
@@ -902,6 +902,7 @@ class RasaChatbot:
             print("Session reset")
         except Exception as e:
             print(f"Reset error: {e}")
+
 
 
 
